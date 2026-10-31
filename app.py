@@ -19,16 +19,18 @@ VALID_API_KEYS = {
     "hkysxbhyws"
 }
 
-daily_limit = 100
+# 🔢 Like limit tracking
+daily_limit = 200
 used_count = 0
 
-# ✅ BD SERVER URLs (only BD supported)
-BD_PERSONAL_SHOW_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
-BD_LIKE_URL          = "https://clientbp.ggpolarbear.com/LikeProfile"
+# 🇧🇩 Only Bangladesh region allowed
+ALLOWED_REGION = "BD"
+BD_LIKE_URL = "https://clientbp.ggpolarbear.com/LikeProfile"
+BD_INFO_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 
 
-def load_tokens(region):
-    """BD only — always loads token_bd.json"""
+def load_tokens():
+    """Load Bangladesh tokens only."""
     try:
         with open("token_bd.json", "r") as f:
             return json.load(f)
@@ -91,13 +93,12 @@ async def send_multiple_requests(uid, region, url):
         encrypted_uid = encrypt_message(protobuf_message)
         if encrypted_uid is None:
             return None
-        tokens = load_tokens(region)
+        tokens = load_tokens()
         if not tokens:
             return None
         tasks = []
-        # ✅ safe: 100 বা token সংখ্যা — যেটা ছোট
-        for i in range(min(100, len(tokens))):
-            token = tokens[i]["token"]
+        for i in range(100):
+            token = tokens[i % len(tokens)]["token"]
             tasks.append(send_request(encrypted_uid, token, url))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return results
@@ -125,8 +126,8 @@ def enc(uid):
 
 
 def make_request(encrypt, region, token):
-    """BD only — always uses BD PersonalShow URL"""
     try:
+        url = BD_INFO_URL
         edata = bytes.fromhex(encrypt)
         headers = {
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
@@ -139,15 +140,10 @@ def make_request(encrypt, region, token):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB55"
         }
-        response = requests.post(
-            BD_PERSONAL_SHOW_URL,
-            data=edata,
-            headers=headers,
-            verify=False,
-            timeout=15
-        )
+        response = requests.post(url, data=edata, headers=headers, verify=False)
+        binary = response.content
         decoded = visit_count_pb2.Info()
-        decoded.ParseFromString(response.content)
+        decoded.ParseFromString(binary)
         return decoded
     except DecodeError as e:
         app.logger.error(f"DecodeError: {e}")
@@ -161,6 +157,7 @@ def make_request(encrypt, region, token):
 def handle_requests():
     global used_count
 
+    # ✅ API key check
     api_key = request.args.get("key")
     if api_key not in VALID_API_KEYS:
         result = OrderedDict([
@@ -174,30 +171,34 @@ def handle_requests():
         )
 
     uid = request.args.get("uid")
-    region = request.args.get("region", "").upper()
+    # 🔒 Region is forced to BD (Bangladesh only)
+    region = ALLOWED_REGION
 
-    if not uid or not region:
-        return {"error": "UID and region are required"}, 400
-
-    # ✅ BD-only enforce
-    if region != "BD":
-        return app.response_class(
-            response=json.dumps(
-                {"error": "Only BD region is supported", "status": 4},
-                separators=(',', ':')
-            ),
-            status=400,
-            mimetype='application/json'
-        )
+    if not uid:
+        return {"error": "UID is required"}, 400
 
     try:
+        # Enforce BD daily limit
+        if used_count >= daily_limit:
+            result = OrderedDict([
+                ("error", "Daily limit reached. Try again after 4:00 AM IST."),
+                ("status", 4),
+                ("daily_limit", daily_limit),
+                ("used", used_count),
+                ("remaining", 0)
+            ])
+            return app.response_class(
+                response=json.dumps(result, separators=(',', ':')),
+                status=429,
+                mimetype='application/json'
+            )
+
         def process_request():
             global used_count
 
-            tokens = load_tokens(region)
+            tokens = load_tokens()
             if not tokens:
                 raise Exception("Failed to load BD tokens.")
-
             token = tokens[0]['token']
             encrypted_uid = enc(uid)
             if encrypted_uid is None:
@@ -208,10 +209,7 @@ def handle_requests():
                 raise Exception("Failed to get initial info.")
             before_like = before.AccountInfo.Likes
 
-            # ✅ BD LikeProfile URL
-            url = BD_LIKE_URL
-
-            asyncio.run(send_multiple_requests(uid, region, url))
+            asyncio.run(send_multiple_requests(uid, region, BD_LIKE_URL))
 
             after = make_request(encrypted_uid, region, token)
             if after is None:
@@ -231,7 +229,7 @@ def handle_requests():
                 ("LikesbeforeCommand", before_like),
                 ("PlayerNickname", after.AccountInfo.PlayerNickname),
                 ("Level", after.AccountInfo.Levels),
-                ("Region", after.AccountInfo.PlayerRegion),
+                ("Region", "BD"),
                 ("UID", after.AccountInfo.UID),
                 ("status", status),
                 ("daily_limit", daily_limit),
@@ -257,14 +255,14 @@ def remain_info():
     global used_count
     remaining = max(daily_limit - used_count, 0)
     data = {
+        "server": "BD",
         "daily_limit": daily_limit,
         "remaining": remaining,
         "used": used_count,
-        "region": "BD",
         "reset_info": "4:00 AM IST"
     }
     return jsonify(data)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
+    app.run(debug=True, use_reloader=False)
