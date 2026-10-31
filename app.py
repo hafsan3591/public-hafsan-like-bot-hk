@@ -6,6 +6,7 @@ import binascii
 import aiohttp
 import requests
 import json
+import random
 import like_pb2
 import uid_generator_pb2
 import visit_count_pb2
@@ -25,6 +26,9 @@ used_count = 0
 # ✅ BD SERVER URLs (only BD supported)
 BD_PERSONAL_SHOW_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 BD_LIKE_URL          = "https://clientbp.ggpolarbear.com/LikeProfile"
+
+# ✅ প্রতি রিকোয়েস্টে কত লাইক যাবে (token_bd.json এ ২০০ টোকেন থাকলেও শুধু ১০০ ব্যবহার হবে)
+LIKES_PER_REQUEST = 100
 
 
 def load_tokens(region):
@@ -84,6 +88,11 @@ async def send_request(encrypted_uid, token, url):
 
 
 async def send_multiple_requests(uid, region, url):
+    """
+    ✅ ২০০+ টোকেন থেকে র‍্যান্ডম ১০০টি বেছে নেয়
+    ✅ প্রতি রিকোয়েস্টে ঠিক ১০০টি লাইক দেয়
+    ✅ সব টোকেন ঘুরে ঘুরে ব্যবহার হয়
+    """
     try:
         protobuf_message = create_protobuf_message(uid, region)
         if protobuf_message is None:
@@ -91,14 +100,20 @@ async def send_multiple_requests(uid, region, url):
         encrypted_uid = encrypt_message(protobuf_message)
         if encrypted_uid is None:
             return None
+
         tokens = load_tokens(region)
         if not tokens:
             return None
+
+        # ✅ প্রতি রিকোয়েস্টে সর্বোচ্চ LIKES_PER_REQUEST (১০০) টোকেন
+        use_count = min(LIKES_PER_REQUEST, len(tokens))
+        selected_tokens = random.sample(tokens, use_count)
+
         tasks = []
-        # ✅ safe: 100 বা token সংখ্যা — যেটা ছোট
-        for i in range(min(100, len(tokens))):
-            token = tokens[i]["token"]
+        for tok in selected_tokens:
+            token = tok["token"]
             tasks.append(send_request(encrypted_uid, token, url))
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return results
     except Exception as e:
@@ -264,6 +279,20 @@ def remain_info():
         "reset_info": "4:00 AM IST"
     }
     return jsonify(data)
+
+
+@app.route('/tokens', methods=['GET'])
+def token_info():
+    """✅ টোকেন সংখ্যা যাচাই করার জন্য নতুন এন্ডপয়েন্ট"""
+    tokens = load_tokens("BD")
+    total = len(tokens) if tokens else 0
+    return jsonify({
+        "region": "BD",
+        "total_tokens_in_file": total,
+        "tokens_used_per_request": min(LIKES_PER_REQUEST, total),
+        "max_likes_per_request": min(LIKES_PER_REQUEST, total),
+        "rotation_enabled": True
+    })
 
 
 if __name__ == '__main__':
