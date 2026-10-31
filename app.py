@@ -20,7 +20,7 @@ VALID_API_KEYS = {
     "hkysxbhyws"
 }
 
-daily_limit = 1000
+daily_limit = 100
 used_count = 0
 
 # ✅ BD SERVER URLs (only BD supported)
