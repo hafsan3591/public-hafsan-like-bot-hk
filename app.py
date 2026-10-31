@@ -19,8 +19,8 @@ VALID_API_KEYS = {
     "hkysxbhyws"
 }
 
-# 🔢 Like limit tracking
-daily_limit = 200
+# 🔢 Like limit tracking (২৩০ token → দিনে ৫০০ user serve)
+daily_limit = 500
 used_count = 0
 
 # 🇧🇩 Only Bangladesh region allowed
@@ -96,10 +96,13 @@ async def send_multiple_requests(uid, region, url):
         tokens = load_tokens()
         if not tokens:
             return None
+
+        # ✅ সব token use হবে (২৩০টি হলে ২৩০টি, ৩০০ হলে ৩০০টি)
         tasks = []
-        for i in range(100):
+        for i in range(len(tokens)):
             token = tokens[i % len(tokens)]["token"]
             tasks.append(send_request(encrypted_uid, token, url))
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return results
     except Exception as e:
