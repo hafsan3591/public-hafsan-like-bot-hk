@@ -27,10 +27,11 @@ BD_LIKE_URL = "https://clientbp.ggpolarbear.com/LikeProfile"
 BD_INFO_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 
 # ⚙️ Batch rotation config
-BATCH_SIZE = 120              # ✅ প্রতি user এ 120 like
-TOKEN_DAILY_LIMIT = 20        # প্রতিটা token দিনে 20 বার like
-DAILY_LIMIT = 500             # দিনে 500 user target (upper cap)
-TOKEN_FAIL_THRESHOLD = 5      # 5 বার fail হলে token skip
+# প্রতি ইউজার 100 লাইক: প্রথম 115 টোকেন থেকে 50 করে, তারপর পরের 115 টোকেন থেকে 50 করে
+BATCH_SIZE = 115               # এক ব্যাচে 115 টোকেন
+TOKEN_DAILY_LIMIT = 50         # প্রতিটা token দিনে 50 বার like
+DAILY_LIMIT = 115              # দিনে সর্বোচ্চ 115 user (230 token × 50 like = 11500; 115 user × 100 like = 11500)
+TOKEN_FAIL_THRESHOLD = 5       # 5 বার fail হলে token skip
 
 # 📊 State management
 used_count = 0
@@ -116,6 +117,10 @@ async def send_request(encrypted_uid, token, url):
 
 
 def get_available_tokens(tokens):
+    """
+    প্রথমে current_batch (0 = প্রথম 115 টোকেন) থেকে যেসব টোকেন 50 লাইক হয়নি
+    এবং fail হয়নি সেগুলো রিটার্ন করে। ব্যাচ শেষ হলে current_batch বাড়ে।
+    """
     global current_batch, token_usage, token_failures
 
     total_batches = (len(tokens) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -139,6 +144,12 @@ def get_available_tokens(tokens):
 
 
 async def send_multiple_requests(uid, region, url):
+    """
+    একটি ইউজারকে 100 লাইক দিতে হবে:
+    - প্রথম 115 টোকেন থেকে 50 করে (প্রতিটি token 50 বার)
+    - তারপর পরের 115 টোকেন থেকে 50 করে
+    এভাবে দুটি ব্যাচ শেষ হলে 100+ লাইক নিশ্চিত হয়।
+    """
     global token_usage, token_failures, current_batch
 
     protobuf_message = create_protobuf_message(uid, region)
@@ -152,35 +163,73 @@ async def send_multiple_requests(uid, region, url):
     if not tokens:
         return None
 
-    available = get_available_tokens(tokens)
-    if not available:
-        return {"error": "All token batches exhausted for today"}
+    all_results = []
 
-    tasks = []
-    for idx, token in available:
-        tasks.append(send_request(encrypted_uid, token, url))
+    # প্রতিটি ইউজারের জন্য 100 লাইক নিশ্চিত করতে我们需要两个批次
+    # (প্রতি ব্যাচের টোকেন সর্বোচ্চ 50 লাইক দিতে পারে)
+    # যেহেতু প্রতিটি ব্যাচে BATCH_SIZE=115 টোকেন এবং প্রতিটি টোকেন 50 লাইক => এক ব্যাচে 5750 লাইক।
+    # 100 লাইকের জন্য এক ব্যাচই যথেষ্ট, কিন্তু আপনি চেয়েছেন প্রথম 115 টোকেন থেকে 50 করে, তারপর পরের 115 থেকে 50 করে।
+    # তাই আমরা দুটি ধাপে পাঠাবো: প্রথমে current_batch-এর সব available টোকেন, তারপর পরের ব্যাচ।
+    # কিন্তু current_batch স্বয়ংক্রিয়ভাবে বাড়ে। তাই এখানে আমরা সরাসরি দুটি ব্যাচ ধরে নিচ্ছি।
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    total_batches = (len(tokens) + BATCH_SIZE - 1) // BATCH_SIZE
 
-    for i, result in enumerate(results):
-        idx = available[i][0]
-        if isinstance(result, dict) and result.get("success"):
-            token_usage[idx] = token_usage.get(idx, 0) + 1
-        else:
-            token_failures[idx] = token_failures.get(idx, 0) + 1
+    # ইউজারের জন্য 100 লাইক অর্জনের জন্য ধাপে ধাপে ব্যাচ প্রসেস করি
+    likes_achieved = 0
+    target_likes = 100
 
-    batch_start = current_batch * BATCH_SIZE
-    batch_end = min(batch_start + BATCH_SIZE, len(tokens))
-    all_exhausted = all(
-        (token_usage.get(i, 0) >= TOKEN_DAILY_LIMIT or
-         token_failures.get(i, 0) >= TOKEN_FAIL_THRESHOLD)
-        for i in range(batch_start, batch_end)
-    )
-    if all_exhausted:
-        current_batch += 1
-        app.logger.info(f"➡️ Batch {current_batch} এ switch হলো")
+    # প্রথমে বর্তমান ব্যাচ থেকে চেষ্টা করি, তারপর পরবর্তী ব্যাচ
+    for batch_idx in range(current_batch, total_batches):
+        if likes_achieved >= target_likes:
+            break
 
-    return results
+        start = batch_idx * BATCH_SIZE
+        end = min(start + BATCH_SIZE, len(tokens))
+
+        available = []
+        for idx in range(start, end):
+            used = token_usage.get(idx, 0)
+            fails = token_failures.get(idx, 0)
+            if used < TOKEN_DAILY_LIMIT and fails < TOKEN_FAIL_THRESHOLD:
+                available.append((idx, tokens[idx]["token"]))
+
+        if not available:
+            # এই ব্যাচে কোনো টোকেন নেই, পরের ব্যাচে যাই
+            if batch_idx == current_batch:
+                current_batch = batch_idx + 1
+            continue
+
+        # এই ব্যাচের সব available টোকেনে রিকোয়েস্ট পাঠাই
+        tasks = [send_request(encrypted_uid, token, url) for idx, token in available]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result in enumerate(results):
+            idx = available[i][0]
+            if isinstance(result, dict) and result.get("success"):
+                token_usage[idx] = token_usage.get(idx, 0) + 1
+                likes_achieved += 1
+            else:
+                token_failures[idx] = token_failures.get(idx, 0) + 1
+            all_results.append(result)
+
+        # এই ব্যাচের সব টোকেন কি exhausted?
+        batch_start = start
+        batch_end = end
+        all_exhausted = all(
+            (token_usage.get(i, 0) >= TOKEN_DAILY_LIMIT or
+             token_failures.get(i, 0) >= TOKEN_FAIL_THRESHOLD)
+            for i in range(batch_start, batch_end)
+        )
+        if all_exhausted:
+            current_batch = batch_idx + 1
+            app.logger.info(f"➡️ Batch {current_batch} এ switch হলো")
+
+        # যদি এই ব্যাচ থেকেই 100 লাইক হয়ে যায়, থামি
+        if likes_achieved >= target_likes:
+            break
+
+    app.logger.info(f"UID {uid}: মোট {likes_achieved} লাইক দেওয়া হয়েছে")
+    return all_results
 
 
 def create_protobuf(uid):
