@@ -27,7 +27,7 @@ BD_LIKE_URL = "https://clientbp.ggpolarbear.com/LikeProfile"
 BD_INFO_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 
 # ⚙️ Batch rotation config
-BATCH_SIZE = 120              # ✅ প্রতি user এ 120 like
+BATCH_SIZE = 200              # ✅ প্রতি user এ 120 like
 TOKEN_DAILY_LIMIT = 20        # প্রতিটা token দিনে 20 বার like
 DAILY_LIMIT = 500             # দিনে 500 user target (upper cap)
 TOKEN_FAIL_THRESHOLD = 5      # 5 বার fail হলে token skip
