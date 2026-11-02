@@ -31,7 +31,7 @@ BD_INFO_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 BATCH_SIZE = 115               # এক ব্যাচে 115 টোকেন
 TOKEN_DAILY_LIMIT = 150         # প্রতিটা token দিনে 50 বার like
 DAILY_LIMIT = 500              # দিনে সর্বোচ্চ 115 user (230 token × 50 like = 11500; 115 user × 100 like = 11500)
-TOKEN_FAIL_THRESHOLD = 5       # 5 বার fail হলে token skip
+TOKEN_FAIL_THRESHOLD = 3       # 5 বার fail হলে token skip
 
 # 📊 State management
 used_count = 0
