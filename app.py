@@ -24,7 +24,7 @@ VALID_API_KEYS = {
 # 🇧🇩 Only Bangladesh region allowed
 ALLOWED_REGION = "BD"
 BD_LIKE_URL = "https://clientbp.ggpolarbear.com/LikeProfile"
-BD_INFO_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
+BD_INFO_URL = "https://client.us.freefiremobile.com/GetPlayerPersonalShow"
 
 # ⚙️ Batch rotation config
 # প্রতি ইউজার 100 লাইক: প্রথম 115 টোকেন থেকে 50 করে, তারপর পরের 115 টোকেন থেকে 50 করে
